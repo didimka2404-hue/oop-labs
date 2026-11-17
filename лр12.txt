@@ -1,6 +1,281 @@
-﻿Сборка начата в 20:55...
-1>------ Сборка начата: проект: ooplaba1, Конфигурация: Debug x64 ------
-1>  ooplaba1.cpp
-1>  ooplaba1.vcxproj -> C:\Users\alexk\source\repos\ooplaba1\x64\Debug\ooplaba1.exe
-========== Сборка: успешно выполнено — 1 , со сбоем — 0, в актуальном состоянии — 0, пропущено — 0 ==========
-========== Сборка завершено в 20:55 и заняло 02,095 с ==========
+#define NOMINMAX
+#ifdef _WIN32
+#include <windows.h>
+#pragma execution_character_set("utf-8")
+#endif
+
+#include <iostream>
+#include <string>
+#include <vector>
+#include <memory>
+#include <stdexcept>
+#include <algorithm>
+#include <unordered_map>
+#include <locale>
+
+template <typename T>
+class TreeNode {
+public:
+    T data;
+    TreeNode* parent; 
+    std::vector<std::unique_ptr<TreeNode<T>>> children;
+
+    TreeNode(T d, TreeNode* p = nullptr) : data(d), parent(p) {}
+};
+
+template <typename T>
+class Tree {
+private:
+    std::unique_ptr<TreeNode<T>> root;
+
+    void collectDescendants(TreeNode<T>* node, std::vector<TreeNode<T>*>& out) {
+        for (auto& child : node->children) {
+            out.push_back(child.get());
+            collectDescendants(child.get(), out);
+        }
+    }
+
+public:
+    TreeNode<T>* getRoot() const { return root.get(); }
+
+    TreeNode<T>* addRoot(T data) {
+        if (root) throw std::runtime_error("root already exists");
+        root = std::make_unique<TreeNode<T>>(data, nullptr);
+        return root.get();
+    }
+
+    TreeNode<T>* addChild(TreeNode<T>* parent, T data) {
+        if (!parent) throw std::runtime_error("parent is null");
+        auto child = std::make_unique<TreeNode<T>>(data, parent);
+        TreeNode<T>* ptr = child.get();
+        parent->children.push_back(std::move(child));
+        return ptr;
+    }
+
+    std::vector<TreeNode<T>*> getDescendants(TreeNode<T>* node) {
+        std::vector<TreeNode<T>*> result;
+        collectDescendants(node, result);
+        return result;
+    }
+
+    std::vector<TreeNode<T>*> getPathTo(TreeNode<T>* target) {
+        std::vector<TreeNode<T>*> path;
+        TreeNode<T>* cur = target;
+        while (cur) {
+            path.push_back(cur);
+            cur = cur->parent;
+        }
+        std::reverse(path.begin(), path.end());
+        return path;
+    }
+
+    TreeNode<T>* getLCA(TreeNode<T>* a, TreeNode<T>* b) {
+        auto pathA = getPathTo(a);
+        auto pathB = getPathTo(b);
+        TreeNode<T>* lca = nullptr;
+        for (size_t i = 0; i < std::min(pathA.size(), pathB.size()); ++i) {
+            if (pathA[i] == pathB[i]) lca = pathA[i];
+            else break;
+        }
+        return lca;
+    }
+};
+
+class VersionData {
+public:
+    int id;
+    std::string content;
+
+    VersionData(int id, std::string content) : id(id), content(content) {}
+
+    std::string toString() const {
+        return "Version [" + std::to_string(id) + "]: " + content;
+    }
+};
+
+class VersionHistory {
+private:
+    Tree<VersionData> tree;
+    std::unordered_map<int, TreeNode<VersionData>*> idMap;
+
+    TreeNode<VersionData>* findNodeById(int id) {
+        auto it = idMap.find(id);
+        return (it != idMap.end()) ? it->second : nullptr;
+    }
+
+    void printNode(TreeNode<VersionData>* node, int depth) {
+        if (!node) return;
+        std::cout << std::string(depth * 2, ' ') << node->data.toString() << "\n";
+        for (auto& child : node->children) printNode(child.get(), depth + 1);
+    }
+
+public:
+    void createInitial(int id, const std::string& content) {
+        auto root = tree.addRoot(VersionData(id, content));
+        idMap[id] = root;
+    }
+
+    void createVersion(int parentId, int newId, const std::string& content) {
+        auto parent = findNodeById(parentId);
+        if (!parent) throw std::runtime_error("parent version not found: " + std::to_string(parentId));
+        auto child = tree.addChild(parent, VersionData(newId, content));
+        idMap[newId] = child;
+    }
+
+    TreeNode<VersionData>* findVersion(int id) {
+        return findNodeById(id);
+    }
+
+    std::vector<int> getDirectDescendants(int id) {
+        auto node = findNodeById(id);
+        if (!node) throw std::runtime_error("version not found");
+        std::vector<int> result;
+        for (auto& c : node->children) result.push_back(c->data.id);
+        return result;
+    }
+
+    std::vector<int> getAllDescendants(int id) {
+        auto node = findNodeById(id);
+        if (!node) throw std::runtime_error("version not found");
+        auto raw = tree.getDescendants(node);
+        std::vector<int> result;
+        for (auto n : raw) result.push_back(n->data.id);
+        return result;
+    }
+
+    std::vector<int> getPathTo(int id) {
+        auto node = findNodeById(id);
+        if (!node) throw std::runtime_error("version not found");
+        auto raw = tree.getPathTo(node);
+        std::vector<int> result;
+        for (auto n : raw) result.push_back(n->data.id);
+        return result;
+    }
+
+    int findLCA(int id1, int id2) {
+        auto n1 = findNodeById(id1);
+        auto n2 = findNodeById(id2);
+        if (!n1 || !n2) throw std::runtime_error("one of the versions not found");
+        auto lca = tree.getLCA(n1, n2);
+        return lca->data.id;
+    }
+
+    void deleteVersion(int id) {
+        auto node = findNodeById(id);
+        if (!node) throw std::runtime_error("version not found: " + std::to_string(id));
+        if (node == tree.getRoot()) throw std::runtime_error("cannot delete root version");
+        if (!node->children.empty()) throw std::runtime_error("cannot delete version with descendants");
+
+        idMap.erase(id);
+
+        auto parent = node->parent;
+        auto& kids = parent->children;
+        kids.erase(std::remove_if(kids.begin(), kids.end(),
+            [node](const std::unique_ptr<TreeNode<VersionData>>& p) { return p.get() == node; }),
+            kids.end());
+    }
+
+    void printHistory() {
+        std::cout << "--- HISTORY TREE ---\n";
+        printNode(tree.getRoot(), 0);
+    }
+
+    void printPathTo(int id) {
+        auto path = getPathTo(id);
+        std::cout << "Path to " << id << ": ";
+        for (size_t i = 0; i < path.size(); ++i) {
+            std::cout << path[i];
+            if (i + 1 < path.size()) std::cout << " -> ";
+        }
+        std::cout << "\n";
+    }
+};
+
+int testsPassed = 0;
+int testsFailed = 0;
+
+void header(const std::string& name) {
+    std::cout << "\n========== " << name << " ==========\n";
+}
+
+void test(const std::string& name, bool condition) {
+    if (condition) {
+        std::cout << "  [OK]   " << name << "\n";
+        ++testsPassed;
+    } else {
+        std::cout << "  [FAIL] " << name << "\n";
+        ++testsFailed;
+    }
+}
+
+template<typename F>
+void testThrows(const std::string& name, F&& f) {
+    try {
+        f();
+        std::cout << "  [FAIL] " << name << " - exception NOT thrown\n";
+        ++testsFailed;
+    } catch (const std::exception& e) {
+        std::cout << "  [OK]   " << name << " (threw: " << e.what() << ")\n";
+        ++testsPassed;
+    }
+}
+
+int main() {
+#ifdef _WIN32
+    SetConsoleOutputCP(65001);
+#endif
+    setlocale(LC_ALL, "Russian");
+
+    VersionHistory h;
+
+    header("TEST 1: Build tree with 2 branches");
+    h.createInitial(1, "Draft");
+    h.createVersion(1, 2, "Added chapter 1");
+    h.createVersion(2, 3, "Fixed typos");
+    h.createVersion(1, 4, "Alternative ending");
+    h.createVersion(4, 5, "Final alternative");
+    h.printHistory();
+
+    header("TEST 2: Direct descendants");
+    auto d1 = h.getDirectDescendants(1);
+    test("version 1 has 2 direct children", d1.size() == 2);
+    test("children are 2 and 4", (d1.size() == 2 && d1[0] == 2 && d1[1] == 4));
+
+    header("TEST 3: All descendants");
+    auto a1 = h.getAllDescendants(1);
+    test("version 1 has 4 total descendants", a1.size() == 4);
+
+    header("TEST 4: Path to version");
+    h.printPathTo(3);
+    h.printPathTo(5);
+    auto p3 = h.getPathTo(3);
+    test("path to 3 has 3 nodes", p3.size() == 3);
+    test("path to 3 = [1,2,3]", (p3 == std::vector<int>{1, 2, 3}));
+    auto p5 = h.getPathTo(5);
+    test("path to 5 = [1,4,5]", (p5 == std::vector<int>{1, 4, 5}));
+
+    header("TEST 5: LCA");
+    test("LCA(3,5) == 1", h.findLCA(3, 5) == 1);
+    test("LCA(2,3) == 2", h.findLCA(2, 3) == 2);
+    test("LCA(3,3) == 3", h.findLCA(3, 3) == 3);
+    test("LCA(3,4) == 1", h.findLCA(3, 4) == 1);
+
+    header("TEST 6: Errors on delete");
+    testThrows("delete version 2 (has child 3)", [&]() { h.deleteVersion(2); });
+    testThrows("delete root version 1", [&]() { h.deleteVersion(1); });
+    testThrows("delete nonexistent 99", [&]() { h.deleteVersion(99); });
+
+    header("TEST 7: Delete leaf");
+    h.deleteVersion(3);
+    test("version 3 no longer exists", h.findVersion(3) == nullptr);
+    h.printHistory();
+
+    header("RESULT");
+    std::cout << "PASSED: " << testsPassed << "   FAILED: " << testsFailed << "\n";
+    if (testsFailed == 0) std::cout << ">>> ALL TESTS PASSED <<<\n";
+    else std::cout << ">>> SOME TESTS FAILED <<<\n";
+
+    std::cout << "\nPress Enter to exit...";
+    std::cin.get();
+    return 0;
+}
